@@ -14,7 +14,7 @@
 <!-- 설정은 config.js 파일에 따로 있습니다. 이 파일(index.html)은 고칠 필요가 없습니다. -->
 <script src="config.js"></script>
 <script>
-const CONFIG = Object.assign({ TEACHER_PASSWORD: "1234", STUDENTS: { "": "" }, FIREBASE: {} }, window.VOCA_CONFIG || {});
+const CONFIG = Object.assign({ TEACHER_PASSWORD: "1234", STUDENTS: { "6406": "" }, FIREBASE: {} }, window.VOCA_CONFIG || {});
 </script>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -145,13 +145,14 @@ function flushPending() {
 /* ============================== 상태 ============================== */
 const S = {
   view: 'login', loginTab: 'student', loginErr: '', teacherOpen: false, teacherErr: '',
-  student: lsGet('vocaHubStudent', null), parent: lsGet('vocaHubParent', null), parTest: null,
+  student: null, parent: null, parTest: null,
   custom: {}, settings: {}, records: {}, students: {}, loaded: { custom: false, settings: false, records: false, students: false },
   testId: null, selGroups: [], count: 'ALL',
   tTab: 'records', recTest: null, recSearch: '', editId: null, detailId: null,
   recordsSubbed: false
 };
 let Q = null; // 진행 중인 시험
+try { localStorage.removeItem('vocaHubStudent'); localStorage.removeItem('vocaHubParent'); } catch (e) {} // 예전에 기억해 둔 학생코드 지우기
 if (S.student && !S.student.code) S.student = null;
 if (S.parent && !S.parent.code) S.parent = null;
 const cleanCode = s => String(s || '').trim().replace(/\s+/g, '');
@@ -221,9 +222,8 @@ function vLogin() {
   const tab = (v, icon, label) => `<button data-act="loginTab" data-v="${v}" class="flex-1 py-3 rounded-xl text-sm font-bold transition-all ${k === v ? 'bg-white text-blue-600 shadow' : 'text-gray-400 hover:text-gray-600'}"><span class="mr-1">${icon}</span>${label}</button>`;
   const desc = { student: '학생코드를 입력하고 시험에 응시합니다.', parent: '자녀의 학생코드로 시험 결과와 소요시간을 확인합니다.' }[k];
   const btn = { student: '학생으로 시작', parent: '결과 확인하기' }[k];
-  const codeInput = v => `<input name="code" value="${esc(v || '')}" placeholder="학생코드" maxlength="20" inputmode="numeric" autocomplete="off" class="${inputCls} text-center text-2xl tracking-[0.3em]">`;
-  const fields = k === 'student' ? codeInput(S.student && S.student.code)
-    : codeInput(S.parent && S.parent.code);
+  const codeInput = () => `<input name="code" value="" placeholder="학생코드" maxlength="20" inputmode="numeric" autocomplete="off" class="${inputCls} text-center text-2xl tracking-[0.3em]">`;
+  const fields = codeInput();
   const teacherBox = `<div class="fixed top-4 right-4 z-30 flex flex-col items-end">
     <button data-act="teacherToggle" class="px-4 py-2 bg-white rounded-full text-xs font-bold shadow-sm border border-gray-100 transition-colors ${S.teacherOpen ? 'text-blue-600' : 'text-gray-500 hover:text-gray-800'}">🧑‍🏫 선생님 로그인</button>
     ${S.teacherOpen ? `<form data-form="teacherLogin" class="fade mt-2 w-64 bg-white p-4 rounded-2xl shadow-2xl border border-gray-100 space-y-3">
@@ -686,8 +686,8 @@ document.addEventListener('submit', e => {
     const code = cleanCode(fd.get('code')), err = checkCode(code);
     if (err) { S.loginErr = err; return render(); }
     S.loginErr = '';
-    if (kind === 'studentLogin') { S.student = { code }; lsSet('vocaHubStudent', S.student); S.view = 'home'; }
-    else { S.parent = { code }; lsSet('vocaHubParent', S.parent); S.parTest = null; S.view = 'parent'; subRecords(); }
+    if (kind === 'studentLogin') { S.student = { code }; S.view = 'home'; }
+    else { S.parent = { code }; S.parTest = null; S.view = 'parent'; subRecords(); }
     render();
   } else if (kind === 'teacherLogin') {
     if (String(fd.get('pw') || '') !== String(CONFIG.TEACHER_PASSWORD)) { S.teacherErr = '비밀번호가 올바르지 않습니다.'; render(); const pw = $('#teacherPw'); if (pw) pw.focus(); return; }
