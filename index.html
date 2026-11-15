@@ -29,7 +29,7 @@ const CONFIG = Object.assign({ TEACHER_PASSWORD: "1234", STUDENTS: { "6406": "" 
   ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
   ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
   .tnum { font-variant-numeric: tabular-nums; }
-  .page { min-height: calc(100vh - 2.75rem); }
+  .page { min-height: 100vh; }
   @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
   .fade { animation: fadeUp .35s ease both; }
   button, input, select, textarea { -webkit-tap-highlight-color: transparent; }
@@ -211,8 +211,8 @@ function render() {
 }
 const banner = () => (storeError ? `<div class="bg-red-50 text-red-600 text-xs font-bold px-4 py-3 rounded-2xl mb-4">${esc(storeError)}</div>` : '') +
   (!USE_FB ? `<div class="bg-amber-50 text-amber-700 text-xs font-bold px-4 py-3 rounded-2xl mb-4">체험 모드 · 기록이 이 기기에만 저장됩니다. config.js 파일에 Firebase 설정을 넣으면 선생님 기기와 공유됩니다.</div>` : '');
-const FOOT = '<footer class="h-11 flex items-center justify-center text-[11px] font-semibold tracking-[0.25em] text-gray-400 select-none">권도현(한국외대)</footer>';
-function setApp(html) { app.innerHTML = html + FOOT; }
+const BADGE = '<div class="flex justify-center mt-5"><span class="inline-flex items-center px-3 py-1.5 rounded-full bg-gray-50 border border-gray-200 text-[11px] leading-none tracking-tight select-none"><span class="font-bold text-gray-400 mr-1">©</span><span class="font-black text-gray-700">권도현</span><span class="font-bold text-gray-400">(한국외대)</span></span></div>';
+function setApp(html) { app.innerHTML = html; }
 const inputCls = 'w-full p-4 bg-white border-2 border-gray-100 rounded-2xl focus:border-blue-500 outline-none transition-all font-bold text-gray-700 shadow-sm';
 
 /* ---------- 로그인 ---------- */
@@ -242,7 +242,7 @@ function vLogin() {
     <form data-form="${k}Login" class="space-y-4">${fields}
       ${S.loginErr ? `<p class="text-red-500 text-sm font-bold text-center">${esc(S.loginErr)}</p>` : ''}
       <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-5 rounded-2xl transition-all shadow-xl shadow-blue-200 active:scale-[0.98]">${btn}</button>
-    </form></div></div>`;
+    </form>${BADGE}</div></div>`;
 }
 
 /* ---------- 학생: 단어장 목록 ---------- */
