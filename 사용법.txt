@@ -1,0 +1,9 @@
+단어 테스트 — 올리는 방법
+
+1. 이 압축 파일을 풉니다.
+2. GitHub 저장소에서 Add file > Upload files 를 누릅니다.
+3. 풀린 폴더 안의 파일을 전부 선택해 끌어다 놓고 Commit changes 를 누릅니다.
+   (index.html, config.js, icon.svg, favicon-32.png, icon-180.png, icon-192.png, icon-512.png, manifest.webmanifest)
+
+다음 업데이트부터는 index.html 하나만 새로 올리면 됩니다.
+config.js 는 다시 올리지 마세요. (설정이 들어 있는 파일입니다)
