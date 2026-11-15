@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>단어 테스트</title>
+<title>종합 테스트 허브</title>
 
 <link rel="icon" type="image/svg+xml" href="icon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
@@ -233,8 +233,8 @@ function vLogin() {
     </form>` : ''}</div>`;
   return `<div class="page flex items-center justify-center p-6 pt-16">${teacherBox}<div class="bg-white p-8 sm:p-10 rounded-[2rem] shadow-2xl max-w-lg w-full border border-gray-100">
     <div class="text-center mb-8">
-      <span class="bg-blue-100 text-blue-700 text-xs font-bold px-4 py-1.5 rounded-full uppercase tracking-widest">Vocabulary Test Hub</span>
-      <h1 class="text-4xl font-black mt-4 text-gray-900 tracking-tight">단어 테스트</h1>
+      <span class="bg-blue-100 text-blue-700 text-xs font-bold px-4 py-1.5 rounded-full uppercase tracking-widest">Test Hub</span>
+      <h1 class="text-4xl font-black mt-4 text-gray-900 tracking-tight">종합 테스트 허브</h1>
     </div>
     ${banner()}
     <div class="flex bg-gray-100 rounded-2xl p-1.5 mb-3">${tab('student', '🎓', '학생')}${tab('parent', '👪', '학부모')}</div>
@@ -495,7 +495,7 @@ function vTeacher() {
   return `<div class="page p-4 sm:p-6"><div class="max-w-5xl mx-auto">
     ${topBar('🧑‍🏫 선생님')}${banner()}
     <div class="flex flex-wrap justify-between items-end gap-4 mb-6">
-      <h1 class="text-3xl font-black text-gray-900 tracking-tight">단어 테스트 관리</h1>
+      <h1 class="text-3xl font-black text-gray-900 tracking-tight">테스트 관리</h1>
       <div class="inline-flex bg-gray-100 rounded-2xl p-1.5">${tab('records', '응시 기록')}${tab('manage', '단어장 관리')}${tab('students', '학생 코드')}</div>
     </div>
     ${S.tTab === 'records' ? `
