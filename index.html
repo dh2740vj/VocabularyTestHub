@@ -494,7 +494,9 @@ function parentRecords() {
   return Object.values(S.records).filter(r => r && r.total && r.code === S.parent.code).sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0));
 }
 function vParent() {
-  const mine = parentRecords(), cnt = {}, titles = {};
+  const all = parentRecords(), isGram = r => r.kind === 'grammar', gramOn = S.parKind === 'grammar';
+  const mine = all.filter(r => isGram(r) === gramOn), cnt = {}, titles = {};
+  const kindBtn = (k, label, n) => `<button data-act="parKind" data-v="${k}" class="flex-1 py-3 rounded-xl text-sm font-bold transition-all ${(S.parKind || 'voca') === k ? 'bg-white text-blue-600 shadow' : 'text-gray-400 hover:text-gray-600'}">${label} <span class="opacity-60">${n}</span></button>`;
   mine.forEach(r => { cnt[r.testId] = (cnt[r.testId] || 0) + 1; titles[r.testId] = r.testTitle || '단어장'; });
   if (S.parTest && !cnt[S.parTest]) S.parTest = null;
   const rows = mine.filter(r => !S.parTest || r.testId === S.parTest);
@@ -506,9 +508,10 @@ function vParent() {
   return `<div class="page p-4 sm:p-6"><div class="max-w-2xl mx-auto">
     ${topBar('👪 학부모')}${banner()}
     <h1 class="text-3xl font-black text-gray-900 tracking-tight mb-1">${who}</h1>
-    <p class="text-gray-500 text-sm mb-6">시험 결과와 소요시간입니다.</p>
+    <p class="text-gray-500 text-sm mb-5">시험 결과와 소요시간입니다.</p>
+    <div class="flex bg-gray-100 rounded-2xl p-1.5 mb-5">${kindBtn('voca', '단어 테스트', all.filter(r => !isGram(r)).length)}${kindBtn('grammar', '문법 테스트', all.filter(isGram).length)}</div>
     ${!S.loaded.records ? '<div class="bg-white rounded-[2rem] shadow-xl p-12 text-center text-gray-400 text-sm font-bold">기록을 불러오는 중…</div>'
-    : !mine.length ? `<div class="bg-white rounded-[2rem] shadow-xl p-12 text-center"><div class="text-4xl mb-4">🔎</div><div class="font-black text-gray-800 mb-2">응시 기록이 없습니다</div><div class="text-gray-400 text-sm">아직 응시한 시험이 없습니다. 시험을 보면 이곳에 결과가 나타납니다.</div></div>`
+    : !mine.length ? `<div class="bg-white rounded-[2rem] shadow-xl p-12 text-center"><div class="text-4xl mb-4">🔎</div><div class="font-black text-gray-800 mb-2">${gramOn ? '문법 테스트' : '단어 테스트'} 응시 기록이 없습니다</div><div class="text-gray-400 text-sm">아직 응시한 시험이 없습니다. 시험을 보면 이곳에 결과가 나타납니다.</div></div>`
     : `<div class="grid grid-cols-3 gap-3 mb-5">${stat('응시 횟수', rows.length + '회', 'bg-blue-50 text-blue-700')}${stat('평균 정답률', avg + '%', 'bg-indigo-50 text-indigo-700')}${stat('평균 소요시간', fmt(avgT), 'bg-amber-50 text-amber-700')}</div>
       <div class="flex flex-wrap gap-2 mb-5">${chip('', '전체', mine.length)}${Object.keys(cnt).map(id => chip(id, titles[id], cnt[id])).join('')}</div>
       <div class="space-y-3">${rows.map(r => { const st = STATUS[r.status] || STATUS.done, pct = Math.round(r.score / r.total * 100), col = pct >= 80 ? 'bg-green-500' : pct >= 50 ? 'bg-amber-500' : 'bg-red-400';
@@ -989,6 +992,7 @@ document.addEventListener('click', e => {
     case 'mDel': if (confirm('이 모의고사를 삭제할까요? 입력해 둔 학생 점수도 함께 삭제됩니다.')) { if (S.mEditId === id) S.mEditId = null; if (S.mEntry && S.mEntry.examId === id) S.mEntry = null;
       Object.keys(S.mockRes).forEach(rid => { if (S.mockRes[rid] && S.mockRes[rid].examId === id) store.remove('mockResults', rid); });
       Promise.resolve(store.remove('mockExams', id)).then(() => { toast('삭제되었습니다'); drawMock(); }, () => toast('삭제에 실패했습니다')); } break;
+    case 'parKind': S.parKind = b.dataset.v; S.parTest = null; render(); break;
     case 'parTest': S.parTest = id || null; render(); break;
     case 'recTest': S.recTest = id || null; drawRecords(); break;
     case 'detail': S.detailId = id; S.detailAll = false; $('#modal').innerHTML = ''; drawDetail(); break;
