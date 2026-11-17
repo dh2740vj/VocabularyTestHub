@@ -85,6 +85,26 @@ function gradeAnswer(user, ko) {
   return false;
 }
 
+const CIRC = '①②③④⑤⑥⑦⑧⑨';
+const isG = q => !Array.isArray(q);
+const qText = q => isG(q) ? q.q : q[0];
+const normG = s => String(s).toLowerCase().trim().replace(/[’‘]/g, "'").replace(/\s+/g, ' ').replace(/[.!?]+$/, '').trim();
+function gradeQ(q, a) {
+  if (!isG(q)) return gradeAnswer(a, q[1]);
+  if (!a) return false;
+  if (q.type === 'short') { const x = normG(a); return !!x && String(q.answer).split('/').some(s => normG(s) === x); }
+  return String(a) === String(q.answer);
+}
+function ansLabel(q, a) { // 학생 답을 보여 줄 글자
+  if (!isG(q) || q.type !== 'mc' || !a) return a;
+  return CIRC[Number(a) - 1] + ' ' + ((q.choices || [])[Number(a) - 1] || '');
+}
+function correctLabel(q) {
+  if (!isG(q)) return q[1];
+  if (q.type === 'mc') return CIRC[Number(q.answer) - 1] + ' ' + ((q.choices || [])[Number(q.answer) - 1] || '');
+  return String(q.answer);
+}
+
 /* ====================== 단어 붙여넣기 인식 ====================== */
 function parseWords(text) {
   const out = [];
@@ -146,7 +166,8 @@ function flushPending() {
 const S = {
   view: 'login', loginTab: 'student', loginErr: '', teacherOpen: false, teacherErr: '',
   student: null, parent: null, parTest: null,
-  custom: {}, settings: {}, records: {}, students: {}, loaded: { custom: false, settings: false, records: false, students: false },
+  custom: {}, settings: {}, records: {}, students: {}, grammar: {}, mock: {}, mockRes: {}, gEdit: null, mEditId: null, mEntry: null,
+  loaded: { custom: false, settings: false, records: false, students: false, grammar: false },
   testId: null, selGroups: [], count: 'ALL',
   tTab: 'records', recTest: null, recSearch: '', editId: null, detailId: null,
   recordsSubbed: false
@@ -175,9 +196,14 @@ function customToTest(id, c) {
   else groups.push({ name: '전체', words });
   return { id, title: c.title || '(제목 없음)', badge: '추가 단어장', order: 'shuffle', groups, custom: true, createdAt: c.createdAt || 0 };
 }
+function grammarToTest(id, g) {
+  const qs = (Array.isArray(g.questions) ? g.questions : Object.values(g.questions || {})).filter(q => q && q.q);
+  return { id, title: g.title || '(제목 없음)', badge: '문법 테스트', order: 'seq', groups: [{ name: '전체', words: qs }], custom: true, grammar: true, createdAt: g.createdAt || 0 };
+}
 function allTests() {
   const cs = Object.keys(S.custom).map(id => customToTest(id, S.custom[id])).sort((a, b) => a.createdAt - b.createdAt);
-  return BUILTIN_TESTS.concat(cs).map(t => {
+  const gs = Object.keys(S.grammar).map(id => grammarToTest(id, S.grammar[id])).sort((a, b) => a.createdAt - b.createdAt);
+  return BUILTIN_TESTS.concat(cs, gs).map(t => {
     const st = S.settings[t.id] || {};
     return Object.assign({}, t, {
       total: t.groups.reduce((a, g) => a + g.words.length, 0),
@@ -252,23 +278,26 @@ function topBar(label) {
     <button data-act="logout" class="px-4 py-2 bg-white rounded-full text-xs font-bold text-gray-400 hover:text-gray-700 shadow-sm border border-gray-100 transition-colors">로그아웃</button></div>`;
 }
 function vHome() {
-  const tests = allTests().filter(t => !t.hidden && t.total > 0);
+  if (!S.loaded.custom || !S.loaded.settings || !S.loaded.grammar) return `<div class="page flex items-center justify-center p-6"><div class="text-center">${banner()}<div class="text-gray-400 font-bold text-sm">테스트를 불러오는 중…</div></div></div>`;
+  const tests = allTests().filter(t => !t.hidden && t.total > 0), voca = tests.filter(t => !t.grammar), gram = tests.filter(t => t.grammar);
   const who = esc(studentName(S.student.code)) + (allStudents()[S.student.code] ? ' · ' + esc(S.student.code) : '');
-  return `<div class="page p-6"><div class="max-w-2xl mx-auto">
-    ${topBar('👤 ' + who)}${banner()}
-    <h1 class="text-3xl font-black text-gray-900 tracking-tight mb-1">응시할 단어장을 고르세요</h1>
-    <p class="text-gray-500 text-sm mb-6">제시된 영어의 정확한 한글 뜻을 입력하는 주관식 테스트입니다.</p>
-    <div class="grid sm:grid-cols-2 gap-4">
-    ${tests.map(t => `<button data-act="pickTest" data-id="${esc(t.id)}" class="group text-left bg-white p-6 rounded-[1.75rem] shadow-lg border-2 border-transparent hover:border-blue-400 hover:shadow-xl hover:-translate-y-0.5 transition-all active:scale-[0.98] flex flex-col">
-        <span class="self-start bg-blue-100 text-blue-700 text-[10px] font-bold px-3 py-1 rounded-full tracking-wider">${esc(t.badge)}</span>
+  const card = t => `<button data-act="pickTest" data-id="${esc(t.id)}" class="group text-left bg-white p-6 rounded-[1.75rem] shadow-lg border-2 border-transparent hover:border-blue-400 hover:shadow-xl hover:-translate-y-0.5 transition-all active:scale-[0.98] flex flex-col">
+        <span class="self-start ${t.grammar ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700'} text-[10px] font-bold px-3 py-1 rounded-full tracking-wider">${esc(t.badge)}</span>
         <div class="text-xl font-black text-gray-900 mt-3 break-words">${esc(t.title)}</div>
-        <div class="text-xs text-gray-400 font-bold mt-2 flex-1">${t.total}단어${t.groups.length > 1 ? ' · ' + t.groups.length + '개 묶음' : ''}</div>
+        <div class="text-xs text-gray-400 font-bold mt-2 flex-1">${t.grammar ? t.total + '문제' : t.total + '단어' + (t.groups.length > 1 ? ' · ' + t.groups.length + '개 묶음' : '')}</div>
         <div class="flex items-center justify-between mt-4 pt-4 border-t border-gray-100 w-full">
           ${limitLabel(t) ? `<span class="bg-amber-50 text-amber-700 text-[11px] font-bold px-3 py-1 rounded-full">⏱ ${limitLabel(t)}</span>` : '<span class="text-[11px] font-bold text-gray-300">시간 제한 없음</span>'}
           <span class="text-xs font-bold text-blue-500 group-hover:translate-x-1 transition-transform">시작하기 →</span>
         </div>
-      </button>`).join('') || '<div class="text-gray-400 text-sm">공개된 단어장이 없습니다.</div>'}
-    </div></div></div>`;
+      </button>`;
+  const section = (title, list) => list.length ? `<h2 class="text-sm font-black text-gray-500 tracking-wide mt-8 mb-3">${title}</h2><div class="grid sm:grid-cols-2 gap-4">${list.map(card).join('')}</div>` : '';
+  return `<div class="page p-6"><div class="max-w-2xl mx-auto">
+    ${topBar('👤 ' + who)}${banner()}
+    <h1 class="text-3xl font-black text-gray-900 tracking-tight mb-1">응시할 테스트를 고르세요</h1>
+    <p class="text-gray-500 text-sm">답을 모두 작성한 뒤 한 번에 제출합니다.</p>
+    ${section('단어 테스트', voca)}${section('문법 테스트', gram)}
+    ${tests.length ? '' : '<div class="text-gray-400 text-sm mt-8">공개된 테스트가 없습니다.</div>'}
+  </div></div>`;
 }
 
 /* ---------- 학생: 범위 설정 ---------- */
@@ -281,11 +310,11 @@ function vSetup() {
   if (!opts.includes(S.count)) S.count = 'ALL';
   const n = S.count === 'ALL' ? pool : S.count, lim = limitSeconds(t, n);
   return `<div class="page flex items-center justify-center p-6"><div class="bg-white p-8 rounded-[2rem] shadow-2xl max-w-lg w-full border border-gray-100">
-    <button data-act="goHome" class="text-xs font-bold text-gray-400 hover:text-gray-700 mb-4">← 단어장 목록</button>
+    <button data-act="goHome" class="text-xs font-bold text-gray-400 hover:text-gray-700 mb-4">← 테스트 목록</button>
     <div class="text-center mb-8">
       <span class="bg-blue-100 text-blue-700 text-xs font-bold px-4 py-1.5 rounded-full tracking-widest">${esc(t.badge)}</span>
       <h1 class="text-3xl font-black mt-4 text-gray-900 tracking-tight break-words">${esc(t.title)}</h1>
-      <p class="text-gray-500 mt-3 text-sm">정확한 한글 뜻을 입력하세요. ${t.order === 'seq' ? '순서대로 출제됩니다.' : '무작위로 출제됩니다.'}</p>
+      <p class="text-gray-500 mt-3 text-sm">${t.grammar ? '' : '정확한 한글 뜻을 입력하세요. '}${t.order === 'seq' ? '순서대로 출제됩니다.' : '무작위로 출제됩니다.'}</p>
     </div>
     <div class="space-y-5 mb-8">
       ${multi ? `<div class="bg-gray-50 rounded-2xl p-5 border border-gray-100">
@@ -304,7 +333,7 @@ function vSetup() {
       </div>
       ${lim ? `<div class="bg-amber-50 text-amber-700 text-sm font-bold px-5 py-4 rounded-2xl text-center">⏱ 제한 시간 ${fmt(lim)} · 시간이 끝나면 자동 제출됩니다</div>` : ''}
     </div>
-    <button data-act="startQuiz" ${pool ? '' : 'disabled'} class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-200 disabled:shadow-none text-white font-bold py-5 rounded-2xl transition-all shadow-xl shadow-blue-200 active:scale-[0.98]">주관식 뜻 쓰기 시작</button>
+    <button data-act="startQuiz" ${pool ? '' : 'disabled'} class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-200 disabled:shadow-none text-white font-bold py-5 rounded-2xl transition-all shadow-xl shadow-blue-200 active:scale-[0.98]">${t.grammar ? '문법 테스트 시작' : '주관식 뜻 쓰기 시작'}</button>
   </div></div>`;
 }
 
@@ -324,7 +353,7 @@ function startQuiz() {
   Q.timer = setInterval(tick, 250); tick();
 }
 const elapsedNow = () => (Date.now() - Q.startMs) / 1000;
-const answeredCount = () => Q.answers.filter(a => a.trim()).length;
+const answeredCount = () => Q.answers.filter(a => String(a).trim()).length;
 function tick() {
   if (!Q || Q.done) return;
   const el = elapsedNow(), node = $('#timer');
@@ -351,15 +380,23 @@ function drawQuiz() {
   tick();
 }
 function drawQuestion() {
-  const cur = Q.qs[Q.idx], first = Q.idx === 0, last = Q.idx === Q.qs.length - 1;
-  setApp(`<div class="page flex items-center justify-center p-4"><div class="bg-white p-8 rounded-[2.5rem] shadow-2xl max-w-lg w-full relative overflow-hidden">
-    ${quizHead('Q. ' + (Q.idx + 1) + ' / ' + Q.qs.length)}
-    <div class="text-center mb-8">
+  const cur = Q.qs[Q.idx], first = Q.idx === 0, last = Q.idx === Q.qs.length - 1, a = Q.answers[Q.idx], g = isG(cur);
+  const pickBtn = (v, label, wide) => `<button type="button" data-act="pickAns" data-v="${esc(v)}" class="${wide ? 'py-6 text-3xl text-center' : 'w-full text-left px-5 py-4'} rounded-2xl border-2 font-bold transition-all ${String(a) === String(v) ? 'bg-blue-600 border-blue-600 text-white' : 'bg-gray-50 border-gray-100 text-gray-700 hover:border-blue-300'}">${label}</button>`;
+  const body = !g ? `<div class="text-center mb-8">
       <p class="text-xs font-bold text-blue-500 mb-4 tracking-widest uppercase">뜻을 입력하세요</p>
       <h2 class="${cur[0].length > 14 ? 'text-3xl' : 'text-5xl'} font-black text-gray-900 tracking-tighter break-words">${esc(cur[0])}</h2>
-    </div>
+    </div>` : `<div class="mb-6">
+      <p class="text-xs font-bold text-indigo-500 mb-3 tracking-widest">${{ mc: '알맞은 것을 고르세요', ox: '어법상 맞으면 O, 틀리면 X', short: '답을 입력하세요' }[cur.type] || ''}</p>
+      <h2 class="text-lg sm:text-xl font-bold text-gray-900 leading-relaxed break-words whitespace-pre-wrap">${esc(cur.q)}</h2>
+    </div>`;
+  const field = !g || cur.type === 'short' ? `<input id="ans" type="text" value="${esc(a)}" placeholder="..." autocomplete="off" class="w-full p-5 border-2 rounded-3xl text-center text-xl font-bold outline-none transition-all border-gray-100 focus:border-blue-500 bg-gray-50">`
+    : cur.type === 'ox' ? `<div class="grid grid-cols-2 gap-3">${pickBtn('O', 'O', true)}${pickBtn('X', 'X', true)}</div>`
+    : `<div class="space-y-2">${(cur.choices || []).map((c, k) => pickBtn(k + 1, '<span class="mr-2">' + CIRC[k] + '</span>' + esc(c))).join('')}</div>`;
+  setApp(`<div class="page flex items-center justify-center p-4"><div class="bg-white p-8 rounded-[2.5rem] shadow-2xl ${g ? 'max-w-xl' : 'max-w-lg'} w-full relative overflow-hidden">
+    ${quizHead('Q. ' + (Q.idx + 1) + ' / ' + Q.qs.length)}
+    ${body}
     <form data-form="answer" class="space-y-4">
-      <input id="ans" type="text" value="${esc(Q.answers[Q.idx])}" placeholder="..." autocomplete="off" class="w-full p-5 border-2 rounded-3xl text-center text-xl font-bold outline-none transition-all border-gray-100 focus:border-blue-500 bg-gray-50">
+      ${field}
       <div class="grid grid-cols-2 gap-3">
         <button type="button" data-act="prevQ" ${first ? 'disabled' : ''} class="bg-gray-100 hover:bg-gray-200 disabled:opacity-40 text-gray-700 font-bold py-4 rounded-2xl transition-all">← 이전</button>
         <button type="submit" class="bg-gray-900 hover:bg-black text-white font-bold py-4 rounded-2xl transition-all active:scale-[0.99] shadow-lg">${last ? '답안 확인 →' : '다음 →'}</button>
@@ -368,7 +405,7 @@ function drawQuestion() {
     <button data-act="review" class="mt-3 w-full bg-blue-50 hover:bg-blue-100 text-blue-600 font-bold py-4 rounded-2xl transition-all">전체 답안 확인 · 제출</button>
     <div class="text-right text-xs font-bold text-gray-300 mt-5"><button data-act="quitQuiz" class="hover:text-gray-500">그만하기</button></div>
   </div></div>`);
-  const a = $('#ans'); if (a) { a.focus(); a.setSelectionRange(a.value.length, a.value.length); }
+  const el = $('#ans'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
 }
 function drawReview() {
   const blanks = Q.qs.length - answeredCount();
@@ -379,11 +416,11 @@ function drawReview() {
       <p class="text-sm mt-2 font-bold ${blanks ? 'text-red-500' : 'text-gray-400'}">${blanks ? '아직 작성하지 않은 문제가 ' + blanks + '개 있습니다.' : '모든 문제를 작성했습니다.'}</p>
     </div>
     <div class="bg-gray-50 rounded-2xl p-3 max-h-[46vh] overflow-y-auto space-y-2 border border-gray-100">
-      ${Q.qs.map((w, i) => { const a = Q.answers[i].trim();
+      ${Q.qs.map((w, i) => { const a = String(Q.answers[i]).trim();
         return `<button data-act="jumpQ" data-i="${i}" class="w-full text-left bg-white px-4 py-3 rounded-xl border ${a ? 'border-gray-100' : 'border-red-200'} hover:border-blue-400 transition-all flex items-center gap-3">
           <span class="shrink-0 w-9 text-xs font-bold text-gray-300 tnum">${i + 1}</span>
-          <span class="flex-1 min-w-0 font-bold text-gray-900 break-words">${esc(w[0])}</span>
-          <span class="flex-1 min-w-0 text-right text-sm font-bold break-words ${a ? 'text-blue-600' : 'text-red-400'}">${a ? esc(a) : '미작성'}</span>
+          <span class="flex-1 min-w-0 font-bold text-gray-900 break-words">${esc(qText(w).length > 70 ? qText(w).slice(0, 70) + '…' : qText(w))}</span>
+          <span class="flex-1 min-w-0 text-right text-sm font-bold break-words ${a ? 'text-blue-600' : 'text-red-400'}">${a ? esc(ansLabel(w, a)) : '미작성'}</span>
         </button>`; }).join('')}
     </div>
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-5">
@@ -396,9 +433,9 @@ function drawReview() {
 function buildRecord(status) {
   saveCurrent();
   let el = elapsedNow(); if (Q.limitSec) el = Math.min(el, Q.limitSec);
-  const items = Q.qs.map((w, i) => { const u = Q.answers[i].trim(), ok = gradeAnswer(u, w[1]); return { q: w[0], u, c: w[1], ok, a: ok }; });
+  const items = Q.qs.map((w, i) => { const raw = String(Q.answers[i]).trim(), ok = gradeQ(w, raw); return { q: qText(w), u: ansLabel(w, raw), c: correctLabel(w), ok, a: ok }; });
   return {
-    code: S.student.code, name: studentName(S.student.code), testId: Q.test.id, testTitle: Q.test.title, range: Q.range,
+    code: S.student.code, name: studentName(S.student.code), testId: Q.test.id, testTitle: Q.test.title, kind: Q.test.grammar ? 'grammar' : 'voca', range: Q.range,
     total: Q.qs.length, answered: items.filter(x => x.u).length, score: items.filter(x => x.ok).length, elapsedSec: Math.round(el), limitSec: Q.limitSec || 0,
     status, startedAt: Q.startMs, finishedAt: Date.now(), items
   };
@@ -444,7 +481,7 @@ function vResult() {
     </div>
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
       <button data-act="copyWrong" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-5 rounded-2xl shadow-xl transition-all active:scale-[0.98]">오답노트 복사</button>
-      <button data-act="goHome" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-5 rounded-2xl transition-all">단어장 목록으로</button>
+      <button data-act="goHome" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-5 rounded-2xl transition-all">테스트 목록으로</button>
     </div></div></div>`;
 }
 function wrongText(r) {
@@ -486,7 +523,20 @@ function vParent() {
           </div>
           <div class="h-2 bg-gray-100 rounded-full overflow-hidden"><div class="h-full ${col} rounded-full" style="width:${pct}%"></div></div>
         </div>`; }).join('')}</div>`}
+    ${parentMockHtml()}
   </div></div>`;
+}
+function parentMockHtml() {
+  const rows = Object.values(S.mockRes).filter(r => r && r.code === S.parent.code).sort((a, b) => (b.year - a.year) || ((b.createdAt || 0) - (a.createdAt || 0)));
+  if (!rows.length) return '';
+  return `<h2 class="text-sm font-black text-gray-500 tracking-wide mt-8 mb-3">모의고사</h2><div class="space-y-3">${rows.map(r => { const pct = Math.round(r.score / r.total * 100), nw = (r.wrong || []).length;
+    return `<div class="bg-white rounded-[1.5rem] shadow border border-gray-100 p-5">
+      <div class="flex items-end justify-between gap-4 mb-2">
+        <div class="min-w-0"><div class="font-black text-gray-900 break-words">${esc(r.year)}년 ${esc(r.examTitle || '')}</div><div class="text-xs text-gray-400 font-bold mt-1">${r.n}문항 중 오답 ${nw}개</div></div>
+        <div class="tnum shrink-0"><span class="text-3xl font-black text-gray-900">${r.score}</span><span class="text-gray-400 font-bold"> / ${r.total}점</span></div>
+      </div>
+      <div class="h-2 bg-gray-100 rounded-full overflow-hidden"><div class="h-full ${pct >= 80 ? 'bg-green-500' : pct >= 50 ? 'bg-amber-500' : 'bg-red-400'} rounded-full" style="width:${pct}%"></div></div>
+    </div>`; }).join('')}</div>`;
 }
 
 /* ---------- 선생님 ---------- */
@@ -496,7 +546,7 @@ function vTeacher() {
     ${topBar('🧑‍🏫 선생님')}${banner()}
     <div class="flex flex-wrap justify-between items-end gap-4 mb-6">
       <h1 class="text-3xl font-black text-gray-900 tracking-tight">테스트 관리</h1>
-      <div class="inline-flex bg-gray-100 rounded-2xl p-1.5">${tab('records', '응시 기록')}${tab('manage', '단어장 관리')}${tab('students', '학생 코드')}</div>
+      <div class="flex flex-wrap bg-gray-100 rounded-2xl p-1.5">${tab('records', '응시 기록')}${tab('manage', '단어장')}${tab('grammar', '문법 테스트')}${tab('mock', '모의고사')}${tab('students', '학생 코드')}</div>
     </div>
     ${S.tTab === 'records' ? `
       <div id="recTabs" class="flex flex-wrap gap-2 mb-4"></div>
@@ -509,7 +559,12 @@ function vTeacher() {
         <div id="recTable" class="overflow-x-auto"></div>
       </div>` : S.tTab === 'manage' ? `
       <div id="testList" class="space-y-3 mb-6"></div>
-      <div id="testForm"></div>` : `
+      <div id="testForm"></div>` : S.tTab === 'grammar' ? `
+      <div id="gList" class="space-y-3 mb-6"></div>
+      <div id="gForm"></div>` : S.tTab === 'mock' ? `
+      <div id="mEntry"></div>
+      <div id="mList" class="mb-6"></div>
+      <div id="mForm"></div>` : `
       <div class="bg-white rounded-[2rem] shadow-xl border border-gray-100 p-5 sm:p-6">
         <p class="text-xs text-gray-400 font-bold mb-4">학생과 학부모가 같은 학생코드로 로그인합니다. 이름을 적어 두면 기록에 코드 대신 이름이 표시됩니다.</p>
         <div id="stuList" class="mb-5"></div>
@@ -521,7 +576,7 @@ function vTeacher() {
       </div>`}
   </div></div>`;
 }
-function afterTeacher() { if (S.tTab === 'records') drawRecords(); else if (S.tTab === 'manage') { drawTestList(); drawTestForm(); } else drawStudents(); drawDetail(); }
+function afterTeacher() { if (S.tTab === 'records') drawRecords(); else if (S.tTab === 'manage') { drawTestList(); drawTestForm(); } else if (S.tTab === 'grammar') { drawGList(); drawGForm(); } else if (S.tTab === 'mock') drawMock(); else drawStudents(); drawDetail(); }
 function drawStudents() {
   const box = $('#stuList'); if (!box) return;
   const st = allStudents(), cnt = {};
@@ -592,7 +647,7 @@ function drawDetail() {
     <div id="detailList" class="bg-gray-50 rounded-2xl p-3 max-h-[50vh] overflow-y-auto space-y-2">
       ${shown.map(({ x, i }) => `<div class="bg-white p-4 rounded-2xl border-2 ${x.ok ? 'border-green-200' : 'border-red-200'} flex items-center gap-4">
         <div class="flex-1 min-w-0">
-          <div class="text-sm font-black text-gray-900 break-words"><span class="text-gray-300 tnum mr-2">${i + 1}</span>${esc(x.q)}${x.fixed ? '<span class="ml-2 text-[10px] font-bold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">선생님 수정</span>' : ''}</div>
+          <div class="text-sm font-black text-gray-900 break-words whitespace-pre-wrap"><span class="text-gray-300 tnum mr-2">${i + 1}</span>${esc(x.q)}${x.fixed ? '<span class="ml-2 text-[10px] font-bold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">선생님 수정</span>' : ''}</div>
           <div class="text-xs mt-1.5 break-words"><span class="text-gray-400 font-bold">학생 답</span> <span class="font-bold ${x.ok ? 'text-green-600' : 'text-red-500'}">${esc(x.u || '(미작성)')}</span></div>
           <div class="text-xs mt-1 break-words"><span class="text-gray-400 font-bold">정답</span> <span class="font-bold text-blue-700">${esc(x.c)}</span></div>
         </div>
@@ -616,14 +671,13 @@ function toggleOk(i) {
   Promise.resolve(store.set('records', id, nr)).then(() => toast(x.ok ? '정답으로 처리했습니다' : '오답으로 처리했습니다'), () => toast('저장에 실패했습니다'));
 }
 
-function drawTestList() {
-  const box = $('#testList'); if (!box) return;
+function testRow(t) {
   const sel = 'px-3 py-2 bg-gray-50 border-2 border-gray-100 rounded-xl text-xs font-bold text-gray-700 outline-none focus:border-blue-500';
-  box.innerHTML = allTests().map(t => `<div class="bg-white rounded-[1.5rem] shadow border border-gray-100 p-5 ${t.hidden ? 'opacity-60' : ''}">
+  return `<div class="bg-white rounded-[1.5rem] shadow border border-gray-100 p-5 ${t.hidden ? 'opacity-60' : ''}">
     <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-      <div><span class="text-[10px] font-bold px-2.5 py-1 rounded-full ${t.custom ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500'}">${t.custom ? '추가' : '기본'}</span>
-        <span class="font-black text-gray-900 ml-2">${esc(t.title)}</span> <span class="text-xs text-gray-400 font-bold ml-1">${t.total}단어 · ${t.groups.length}묶음</span></div>
-      ${t.custom ? `<div class="text-xs font-bold"><button data-act="editTest" data-id="${esc(t.id)}" class="text-blue-500 mr-3">수정</button><button data-act="delTest" data-id="${esc(t.id)}" class="text-gray-300 hover:text-red-500">삭제</button></div>` : ''}
+      <div><span class="text-[10px] font-bold px-2.5 py-1 rounded-full ${t.custom ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500'}">${t.grammar ? '문법' : t.custom ? '추가' : '기본'}</span>
+        <span class="font-black text-gray-900 ml-2">${esc(t.title)}</span> <span class="text-xs text-gray-400 font-bold ml-1">${t.grammar ? t.total + '문제' : t.total + '단어 · ' + t.groups.length + '묶음'}</span></div>
+      ${t.custom ? `<div class="text-xs font-bold"><button data-act="${t.grammar ? 'editG' : 'editTest'}" data-id="${esc(t.id)}" class="text-blue-500 mr-3">수정</button><button data-act="${t.grammar ? 'delG' : 'delTest'}" data-id="${esc(t.id)}" class="text-gray-300 hover:text-red-500">삭제</button></div>` : ''}
     </div>
     <div class="flex flex-wrap items-center gap-2 text-xs font-bold text-gray-500">
       <span>제한 시간</span>
@@ -638,8 +692,189 @@ function drawTestList() {
         <option value="shuffle" ${t.order === 'shuffle' ? 'selected' : ''}>무작위</option><option value="seq" ${t.order === 'seq' ? 'selected' : ''}>순서대로</option>
       </select>
       <label class="ml-3 flex items-center gap-1.5 cursor-pointer"><input data-set="visible" data-id="${esc(t.id)}" type="checkbox" ${t.hidden ? '' : 'checked'} class="w-4 h-4"> 학생에게 공개</label>
-    </div></div>`).join('');
+    </div></div>`;
 }
+function drawTestList() { const box = $('#testList'); if (box) box.innerHTML = allTests().filter(t => !t.grammar).map(testRow).join(''); }
+
+/* ---------- 선생님: 문법 테스트 ---------- */
+const newGQ = () => ({ type: 'mc', q: '', choices: ['', '', '', '', ''], answer: '' });
+function drawGList() { const box = $('#gList'); if (box) box.innerHTML = allTests().filter(t => t.grammar).map(testRow).join('') || '<div class="bg-white rounded-[1.5rem] shadow border border-gray-100 p-8 text-center text-gray-400 text-sm font-bold">아직 만든 문법 테스트가 없습니다. 아래에서 추가해 보세요.</div>'; }
+function drawGForm() {
+  const box = $('#gForm'); if (!box) return;
+  if (!S.gEdit) S.gEdit = { id: null, title: '', questions: [newGQ()] };
+  const g = S.gEdit, fld = 'w-full px-4 py-3 bg-gray-50 border-2 border-gray-100 rounded-xl focus:border-blue-500 outline-none text-sm font-bold text-gray-700';
+  box.innerHTML = `<form data-form="saveGrammar" class="bg-white rounded-[2rem] shadow-xl border border-gray-100 p-6 sm:p-8">
+    <h2 class="text-xl font-black text-gray-900 mb-1">${g.id ? '문법 테스트 수정' : '새 문법 테스트 추가'}</h2>
+    <p class="text-xs text-gray-400 font-bold mb-5">문제마다 형식(객관식 · O/X · 단답)을 고를 수 있습니다. 단답형은 정답이 여러 개면 / 로 구분해 적습니다.</p>
+    <input data-g="title" value="${esc(g.title)}" placeholder="테스트 이름 (예: 관계대명사 1회)" maxlength="40" class="${inputCls} mb-4">
+    <div class="space-y-4">${g.questions.map((q, i) => `<div class="bg-gray-50 rounded-2xl border border-gray-100 p-4">
+      <div class="flex items-center justify-between gap-3 mb-3">
+        <div class="flex items-center gap-3"><span class="text-sm font-black text-gray-900">${i + 1}번</span>
+          <select data-gq="type" data-i="${i}" class="px-3 py-2 bg-white border-2 border-gray-100 rounded-xl text-xs font-bold text-gray-700 outline-none focus:border-blue-500">
+            <option value="mc" ${q.type === 'mc' ? 'selected' : ''}>객관식</option><option value="ox" ${q.type === 'ox' ? 'selected' : ''}>O / X</option><option value="short" ${q.type === 'short' ? 'selected' : ''}>단답 주관식</option>
+          </select></div>
+        ${g.questions.length > 1 ? `<button type="button" data-act="gDelQ" data-i="${i}" class="text-xs font-bold text-gray-300 hover:text-red-500">문제 삭제</button>` : ''}
+      </div>
+      <textarea data-gq="q" data-i="${i}" rows="2" placeholder="문제 (예: She is the girl ___ I met yesterday.)" class="${fld} bg-white font-normal leading-relaxed mb-3">${esc(q.q)}</textarea>
+      ${q.type === 'mc' ? `<div class="space-y-2">${q.choices.map((c, k) => `<label class="flex items-center gap-2"><input type="radio" name="gans${i}" data-gq="answer" data-i="${i}" value="${k + 1}" ${String(q.answer) === String(k + 1) ? 'checked' : ''} class="w-4 h-4 shrink-0"><span class="text-sm font-bold text-gray-400 w-5">${CIRC[k]}</span><input data-gq="choice" data-i="${i}" data-k="${k}" value="${esc(c)}" placeholder="보기 ${k + 1}${k > 1 ? ' (비워도 됨)' : ''}" class="${fld} bg-white py-2"></label>`).join('')}<p class="text-[11px] font-bold text-gray-400 pt-1">왼쪽 동그라미로 정답을 표시하세요.</p></div>`
+      : q.type === 'ox' ? `<div class="flex items-center gap-5 text-sm font-bold text-gray-700"><span class="text-xs text-gray-400">정답</span>${['O', 'X'].map(v => `<label class="flex items-center gap-1.5 cursor-pointer"><input type="radio" name="gans${i}" data-gq="answer" data-i="${i}" value="${v}" ${q.answer === v ? 'checked' : ''} class="w-4 h-4"> ${v}</label>`).join('')}</div>`
+      : `<input data-gq="answer" data-i="${i}" value="${esc(q.answer)}" placeholder="정답 (여러 개면 / 로 구분, 예: whom / who / that)" class="${fld} bg-white">`}
+    </div>`).join('')}</div>
+    <button type="button" data-act="gAddQ" class="mt-4 w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-2xl">+ 문제 추가</button>
+    <div class="flex gap-3 mt-4">
+      <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-2xl shadow-xl shadow-blue-200">${g.id ? '수정 내용 저장' : '문법 테스트 추가'}</button>
+      ${g.id ? '<button type="button" data-act="cancelG" class="px-6 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-2xl">취소</button>' : ''}
+    </div></form>`;
+}
+function gSync(el) { // 입력값을 편집 상태에 반영. 화면을 다시 그려야 하면 true
+  const g = S.gEdit; if (!g || !el.dataset) return false;
+  if (el.dataset.g === 'title') { g.title = el.value; return false; }
+  const k = el.dataset.gq, q = g.questions[Number(el.dataset.i)]; if (!k || !q) return false;
+  if (k === 'type') { q.type = el.value; q.answer = ''; return true; }
+  if (k === 'q') q.q = el.value;
+  else if (k === 'choice') q.choices[Number(el.dataset.k)] = el.value;
+  else if (k === 'answer' && (el.type !== 'radio' || el.checked)) q.answer = el.value;
+  return false;
+}
+function saveGrammar() {
+  const g = S.gEdit, title = (g.title || '').trim(), out = [];
+  if (!title) return toast('테스트 이름을 입력해 주세요');
+  for (let i = 0; i < g.questions.length; i++) {
+    const q = g.questions[i], text = (q.q || '').trim(), n = i + 1;
+    if (!text) return toast(n + '번 문제의 내용을 입력해 주세요');
+    if (q.type === 'mc') {
+      const kept = q.choices.map((c, k) => ({ c: String(c).trim(), k: k + 1 })).filter(x => x.c);
+      if (kept.length < 2) return toast(n + '번 문제의 보기를 2개 이상 입력해 주세요');
+      const pos = kept.findIndex(x => String(x.k) === String(q.answer));
+      if (pos < 0) return toast(n + '번 문제의 정답을 표시해 주세요');
+      out.push({ type: 'mc', q: text, choices: kept.map(x => x.c), answer: pos + 1 });
+    } else if (q.type === 'ox') {
+      if (q.answer !== 'O' && q.answer !== 'X') return toast(n + '번 문제의 정답(O/X)을 선택해 주세요');
+      out.push({ type: 'ox', q: text, answer: q.answer });
+    } else {
+      const ans = String(q.answer || '').trim(); if (!ans) return toast(n + '번 문제의 정답을 입력해 주세요');
+      out.push({ type: 'short', q: text, answer: ans });
+    }
+  }
+  const id = g.id || 'g' + uid(), old = g.id ? S.grammar[g.id] : null;
+  Promise.resolve(store.set('grammarTests', id, { title, questions: out, createdAt: old && old.createdAt || Date.now() }))
+    .then(() => { toast(old ? '수정되었습니다' : '문법 테스트가 추가되었습니다 (' + out.length + '문제)'); S.gEdit = null; drawGForm(); }, () => toast('저장에 실패했습니다'));
+}
+
+/* ---------- 선생님: 모의고사 ---------- */
+const mockKey = s => String(s || '').replace(/[^1-5]/g, '');
+const mockNums = (s, n) => [...new Set(String(s || '').split(/[^0-9]+/).map(Number).filter(x => x >= 1 && x <= n))].sort((a, b) => a - b);
+function mockPts(ex, i) { return (ex.three || []).includes(i + 1) ? 3 : (Number(ex.base) || 2); }
+function mockTotal(ex) { let s = 0; for (let i = 0; i < ex.key.length; i++) s += mockPts(ex, i); return s; }
+function gradeMock(ex, ans) { // ans: 숫자 문자열 (0 = 무응답)
+  let score = 0; const wrong = [];
+  for (let i = 0; i < ex.key.length; i++) { if (ans[i] === ex.key[i]) score += mockPts(ex, i); else wrong.push(i + 1); }
+  return { score, wrong };
+}
+const mockName = code => allStudents()[code] || '학생 ' + code;
+function drawMock() { drawMEntry(); drawMList(); drawMForm(); }
+function drawMList() {
+  const box = $('#mList'); if (!box) return;
+  const exams = Object.keys(S.mock).map(id => Object.assign({ id }, S.mock[id])).filter(e => e.key).sort((a, b) => (b.year - a.year) || ((a.createdAt || 0) - (b.createdAt || 0)));
+  if (!exams.length) { box.innerHTML = '<div class="bg-white rounded-[1.5rem] shadow border border-gray-100 p-8 text-center text-gray-400 text-sm font-bold">아직 등록한 모의고사가 없습니다. 아래에서 정답지를 등록해 보세요.</div>'; return; }
+  let html = '', year = null;
+  exams.forEach(ex => {
+    if (ex.year !== year) { year = ex.year; html += `<h2 class="text-sm font-black text-gray-500 tracking-wide mt-6 mb-3">${esc(year)}년</h2>`; }
+    const res = Object.keys(S.mockRes).map(id => Object.assign({ id }, S.mockRes[id])).filter(r => r.examId === ex.id).sort((a, b) => b.score - a.score);
+    html += `<div class="bg-white rounded-[1.5rem] shadow border border-gray-100 p-5 mb-3">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div><span class="font-black text-gray-900">${esc(ex.title)}</span> <span class="text-xs text-gray-400 font-bold ml-1">${ex.key.length}문항 · ${mockTotal(ex)}점 만점 · 입력 ${res.length}명</span></div>
+        <div class="text-xs font-bold flex items-center"><button data-act="mEnter" data-id="${esc(ex.id)}" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl mr-3">점수 입력</button><button data-act="mEdit" data-id="${esc(ex.id)}" class="text-blue-500 mr-3">정답지 수정</button><button data-act="mDel" data-id="${esc(ex.id)}" class="text-gray-300 hover:text-red-500">삭제</button></div>
+      </div>
+      ${res.length ? `<div class="overflow-x-auto mt-4"><table class="w-full text-sm"><thead><tr class="text-left text-[11px] text-gray-400"><th class="py-2 px-2 whitespace-nowrap">학생</th><th class="py-2 px-2 whitespace-nowrap">점수</th><th class="py-2 px-2">오답 번호</th><th class="py-2 px-2 whitespace-nowrap">입력일</th><th></th></tr></thead><tbody>
+        ${res.map(r => `<tr class="border-t border-gray-100 align-top">
+          <td class="py-3 px-2 whitespace-nowrap"><div class="font-bold text-gray-800">${esc(mockName(r.code))}</div><div class="text-[11px] text-gray-400">${esc(r.code)}</div></td>
+          <td class="py-3 px-2 whitespace-nowrap tnum"><span class="font-black text-gray-800">${r.score}</span><span class="text-gray-400">/${r.total}</span></td>
+          <td class="py-3 px-2 text-xs font-bold text-red-500 tnum leading-relaxed">${(r.wrong || []).length ? (r.wrong || []).join(', ') : '<span class="text-green-600">없음</span>'}</td>
+          <td class="py-3 px-2 whitespace-nowrap text-gray-500 tnum">${fmtDate(r.createdAt)}</td>
+          <td class="py-3 px-2 whitespace-nowrap text-right"><button data-act="mEditRes" data-id="${esc(r.id)}" class="text-xs font-bold text-blue-500 mr-3">수정</button><button data-act="mDelRes" data-id="${esc(r.id)}" class="text-xs font-bold text-gray-300 hover:text-red-500">삭제</button></td>
+        </tr>`).join('')}</tbody></table></div>` : ''}
+    </div>`;
+  });
+  box.innerHTML = html;
+}
+function mLiveHtml() {
+  const en = S.mEntry, ex = S.mock[en.examId], ans = en.ans, n = ex.key.length;
+  let score = 0; const wrong = [];
+  for (let i = 0; i < ans.length; i++) { if (ans[i] === ex.key[i]) score += mockPts(ex, i); else wrong.push(i + 1); }
+  return `<div class="flex flex-wrap items-end gap-x-6 gap-y-2 mb-3">
+      <div class="tnum"><span class="text-4xl font-black text-blue-700">${score}</span><span class="text-gray-400 font-bold"> / ${mockTotal(ex)}점</span></div>
+      <div class="text-xs font-bold text-gray-500">${ans.length < n ? `입력 ${ans.length} / ${n} · 다음은 <span class="text-blue-600">${ans.length + 1}번</span>` : '모든 문항 입력 완료'}</div>
+    </div>
+    <div class="text-xs font-bold mb-3 leading-relaxed"><span class="text-gray-400">오답 번호</span> <span class="text-red-500 tnum">${wrong.length ? wrong.join(', ') : '없음'}</span></div>
+    <div class="grid grid-cols-5 sm:grid-cols-9 gap-1.5">${ex.key.split('').map((k, i) => { const a = ans[i], st = a == null ? 'bg-gray-50 border-gray-100 text-gray-300' : a === k ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-600';
+      return `<div class="rounded-xl border-2 ${st} ${i === ans.length ? 'ring-2 ring-blue-400' : ''} text-center py-1.5"><div class="text-[10px] font-bold opacity-70 tnum">${i + 1}${mockPts(ex, i) === 3 ? ' <span class="text-indigo-500">3점</span>' : ''}</div><div class="text-lg font-black leading-tight">${a == null ? '·' : a === '0' ? '-' : a}</div><div class="text-[10px] font-bold text-blue-600 h-3 leading-none">${a != null && a !== k ? '정답 ' + k : ''}</div></div>`; }).join('')}</div>`;
+}
+function drawMEntry() {
+  const box = $('#mEntry'); if (!box) return;
+  const en = S.mEntry, ex = en && S.mock[en.examId];
+  if (!ex) { S.mEntry = null; box.innerHTML = ''; return; }
+  const st = allStudents();
+  box.innerHTML = `<div class="bg-white rounded-[2rem] shadow-xl border-2 border-blue-200 p-6 sm:p-8 mb-6">
+    <div class="flex justify-between items-start gap-4 mb-4"><div><h2 class="text-xl font-black text-gray-900">점수 입력</h2><div class="text-xs text-gray-500 font-bold mt-1">${esc(ex.year)}년 ${esc(ex.title)} · ${ex.key.length}문항</div></div>
+      <button data-act="mClose" class="text-gray-400 hover:text-gray-700 font-bold text-sm">닫기</button></div>
+    <div class="grid sm:grid-cols-3 gap-3 mb-2">
+      <select id="mStu" class="${inputCls} cursor-pointer"><option value="">학생 선택</option>${Object.keys(st).sort().map(c => `<option value="${esc(c)}" ${en.code === c ? 'selected' : ''}>${esc(st[c] ? st[c] + ' (' + c + ')' : c)}</option>`).join('')}</select>
+      <input id="mAns" value="${esc(en.ans)}" inputmode="numeric" autocomplete="off" placeholder="1번부터 답을 이어서 입력 (예: 32514…)" class="sm:col-span-2 ${inputCls} tracking-[0.2em] tnum">
+    </div>
+    <p class="text-[11px] font-bold text-gray-400 mb-4">학생이 고른 답을 1번부터 순서대로 숫자만 이어서 입력하세요. 답을 안 쓴 문항은 0을 입력합니다.</p>
+    <div id="mLive">${mLiveHtml()}</div>
+    <button data-act="mSave" class="mt-5 w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-2xl shadow-xl shadow-blue-200">저장</button>
+  </div>`;
+}
+function saveMockEntry() {
+  const en = S.mEntry, ex = en && S.mock[en.examId]; if (!ex) return;
+  if (!en.code) return toast('학생을 선택해 주세요');
+  const n = ex.key.length;
+  if (!en.ans.length) return toast('답을 입력해 주세요');
+  if (en.ans.length < n && !confirm(n + '문항 중 ' + en.ans.length + '문항만 입력되었습니다. 나머지는 무응답으로 처리해 저장할까요?')) return;
+  const ans = en.ans.padEnd(n, '0'), g = gradeMock(ex, ans);
+  const rec = { examId: en.examId, examTitle: ex.title, year: ex.year, code: en.code, name: mockName(en.code), answers: ans, score: g.score, total: mockTotal(ex), n, wrong: g.wrong, createdAt: Date.now() };
+  Promise.resolve(store.set('mockResults', en.examId + '_' + en.code, rec)).then(() => { toast(mockName(en.code) + ' · ' + g.score + '점 저장되었습니다'); S.mEntry = { examId: en.examId, code: '', ans: '' }; drawMEntry(); }, () => toast('저장에 실패했습니다'));
+}
+function drawMForm() {
+  const box = $('#mForm'); if (!box) return;
+  const ex = S.mEditId ? S.mock[S.mEditId] : null;
+  box.innerHTML = `<form data-form="saveMock" class="bg-white rounded-[2rem] shadow-xl border border-gray-100 p-6 sm:p-8">
+    <h2 class="text-xl font-black text-gray-900 mb-1">${ex ? '정답지 수정' : '새 모의고사 정답지 등록'}</h2>
+    <p class="text-xs text-gray-400 font-bold mb-5">정답을 1번부터 순서대로 숫자만 입력하세요. 띄어쓰기나 줄바꿈은 무시됩니다.${ex ? ' 정답지를 고치면 이미 입력한 학생들의 점수도 다시 계산됩니다.' : ''}</p>
+    <div class="grid sm:grid-cols-4 gap-3 mb-3">
+      <input name="year" type="number" value="${ex ? esc(ex.year) : new Date().getFullYear()}" placeholder="연도" class="${inputCls}">
+      <input name="title" value="${esc(ex ? ex.title : '')}" placeholder="시험 이름 (예: 6월 모의평가)" maxlength="40" class="sm:col-span-3 ${inputCls}">
+    </div>
+    <textarea id="mKey" name="key" rows="3" placeholder="정답 (예: 12345 54321 13524 …)" class="${inputCls} tracking-[0.15em] tnum">${esc(ex ? ex.key.replace(/(.{5})/g, '$1 ').trim() : '')}</textarea>
+    <div id="mKeyInfo" class="text-xs font-bold text-blue-600 mt-2 mb-4 min-h-[1rem]"></div>
+    <div class="grid sm:grid-cols-4 gap-3 mb-5">
+      <label class="text-xs font-bold text-gray-400">기본 배점<input name="base" type="number" min="1" value="${ex ? Number(ex.base) || 2 : 2}" class="mt-1 ${inputCls}"></label>
+      <label class="sm:col-span-3 text-xs font-bold text-gray-400">3점 문항 번호<input name="three" value="${esc(ex ? (ex.three || []).join(', ') : '')}" placeholder="예: 21, 24, 29, 30, 31, 33, 34, 37, 39, 42" class="mt-1 ${inputCls}"></label>
+    </div>
+    <div class="flex gap-3">
+      <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-2xl shadow-xl shadow-blue-200">${ex ? '수정 내용 저장' : '정답지 등록'}</button>
+      ${ex ? '<button type="button" data-act="cancelM" class="px-6 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-2xl">취소</button>' : ''}
+    </div></form>`;
+  mKeyInfo();
+}
+function mKeyInfo() { const ta = $('#mKey'), info = $('#mKeyInfo'); if (ta && info) { const n = mockKey(ta.value).length; info.textContent = n ? n + '문항 인식' : ''; } }
+function saveMockExam(fd) {
+  const year = Math.floor(Number(fd.get('year'))), title = String(fd.get('title') || '').trim(), key = mockKey(fd.get('key'));
+  if (!(year >= 1990 && year <= 2100)) return toast('연도를 입력해 주세요');
+  if (!title) return toast('시험 이름을 입력해 주세요');
+  if (!key.length) return toast('정답을 입력해 주세요 (1~5 숫자)');
+  const id = S.mEditId || 'm' + uid(), old = S.mEditId ? S.mock[S.mEditId] : null;
+  const ex = { year, title, key, base: Math.max(1, Math.floor(Number(fd.get('base')) || 2)), three: mockNums(fd.get('three'), key.length), createdAt: old && old.createdAt || Date.now() };
+  Promise.resolve(store.set('mockExams', id, ex)).then(() => {
+    if (old) Object.keys(S.mockRes).forEach(rid => { const r = S.mockRes[rid]; if (!r || r.examId !== id) return; // 정답지가 바뀌면 다시 채점
+      const ans = String(r.answers || '').slice(0, key.length).padEnd(key.length, '0'), g = gradeMock(ex, ans);
+      store.set('mockResults', rid, Object.assign({}, r, { examTitle: title, year, answers: ans, score: g.score, total: mockTotal(ex), n: key.length, wrong: g.wrong })); });
+    toast(old ? '수정되었습니다' : '정답지가 등록되었습니다 (' + key.length + '문항)'); S.mEditId = null; drawMForm();
+  }, () => toast('저장에 실패했습니다'));
+}
+
 function drawTestForm() {
   const box = $('#testForm'); if (!box) return;
   const c = S.editId ? S.custom[S.editId] : null;
@@ -676,6 +911,8 @@ function saveSetting(id, patch) {
 function subRecords() {
   if (S.recordsSubbed) return; S.recordsSubbed = true;
   store.sub('records', v => { S.records = v; S.loaded.records = true; if (S.view === 'teacher') { drawRecords(); drawStudents(); drawDetail(); } else if (S.view === 'parent') render(); });
+  store.sub('mockExams', v => { S.mock = v; if (S.view === 'teacher' && S.tTab === 'mock') { drawMList(); if (S.mEntry && !S.mock[S.mEntry.examId]) drawMEntry(); } });
+  store.sub('mockResults', v => { S.mockRes = v; if (S.view === 'teacher' && S.tTab === 'mock') drawMList(); else if (S.view === 'parent') render(); });
 }
 function goTeacher() { S.view = 'teacher'; subRecords(); render(); }
 document.addEventListener('submit', e => {
@@ -699,6 +936,8 @@ document.addEventListener('submit', e => {
     if (!/^[0-9A-Za-z_-]{2,20}$/.test(code)) return toast('학생코드는 숫자·영문 2~20자로 입력해 주세요');
     Promise.resolve(store.set('students', code, { name })).then(() => { toast('저장되었습니다'); f.reset(); }, () => toast('저장에 실패했습니다'));
   }
+  else if (kind === 'saveGrammar') saveGrammar();
+  else if (kind === 'saveMock') saveMockExam(fd);
   else if (kind === 'saveTest') {
     const title = String(fd.get('title') || '').trim(), words = parseWords(fd.get('words') || '');
     if (!title) return toast('단어장 이름을 입력해 주세요');
@@ -731,7 +970,25 @@ document.addEventListener('click', e => {
     case 'toggleOk': toggleOk(Number(b.dataset.i)); break;
     case 'detailFilter': S.detailAll = !!b.dataset.v; drawDetail(); { const l = $('#detailList'); if (l) l.scrollTop = 0; } break;
     case 'copyWrong': copyText(wrongText(Q.rec), '오답 노트가 복사되었습니다!'); break;
-    case 'tTab': S.tTab = b.dataset.v; S.editId = null; render(); break;
+    case 'tTab': S.tTab = b.dataset.v; S.editId = null; S.mEditId = null; render(); break;
+    case 'pickAns': if (Q && !Q.done) { Q.answers[Q.idx] = b.dataset.v; drawQuiz(); } break;
+    case 'gAddQ': S.gEdit.questions.push(newGQ()); drawGForm(); { const qs = document.querySelectorAll('#gForm textarea'); if (qs.length) qs[qs.length - 1].focus(); } break;
+    case 'gDelQ': S.gEdit.questions.splice(Number(b.dataset.i), 1); drawGForm(); break;
+    case 'editG': { const g = S.grammar[id]; if (!g) break; const qs = (Array.isArray(g.questions) ? g.questions : Object.values(g.questions || {})).filter(Boolean);
+      S.gEdit = { id, title: g.title || '', questions: qs.map(q => ({ type: q.type, q: q.q || '', choices: (q.choices || []).concat(['', '', '', '', '']).slice(0, 5), answer: q.answer == null ? '' : String(q.answer) })) };
+      if (!S.gEdit.questions.length) S.gEdit.questions.push(newGQ()); drawGForm(); $('#gForm').scrollIntoView({ behavior: 'smooth' }); break; }
+    case 'cancelG': S.gEdit = null; drawGForm(); break;
+    case 'delG': if (confirm('이 문법 테스트를 삭제할까요? (이미 쌓인 응시 기록은 남습니다)')) { if (S.gEdit && S.gEdit.id === id) S.gEdit = null; Promise.resolve(store.remove('grammarTests', id)).then(() => { store.remove('settings', id); toast('삭제되었습니다'); drawGForm(); }, () => toast('삭제에 실패했습니다')); } break;
+    case 'mEnter': S.mEntry = { examId: id, code: '', ans: '' }; drawMEntry(); $('#mEntry').scrollIntoView({ behavior: 'smooth' }); break;
+    case 'mEditRes': { const r = S.mockRes[id]; if (!r) break; S.mEntry = { examId: r.examId, code: r.code, ans: String(r.answers || '') }; drawMEntry(); $('#mEntry').scrollIntoView({ behavior: 'smooth' }); break; }
+    case 'mClose': S.mEntry = null; drawMEntry(); break;
+    case 'mSave': saveMockEntry(); break;
+    case 'mEdit': S.mEditId = id; drawMForm(); $('#mForm').scrollIntoView({ behavior: 'smooth' }); break;
+    case 'cancelM': S.mEditId = null; drawMForm(); break;
+    case 'mDelRes': if (confirm('이 학생의 모의고사 점수를 삭제할까요?')) Promise.resolve(store.remove('mockResults', id)).catch(() => toast('삭제에 실패했습니다')); break;
+    case 'mDel': if (confirm('이 모의고사를 삭제할까요? 입력해 둔 학생 점수도 함께 삭제됩니다.')) { if (S.mEditId === id) S.mEditId = null; if (S.mEntry && S.mEntry.examId === id) S.mEntry = null;
+      Object.keys(S.mockRes).forEach(rid => { if (S.mockRes[rid] && S.mockRes[rid].examId === id) store.remove('mockResults', rid); });
+      Promise.resolve(store.remove('mockExams', id)).then(() => { toast('삭제되었습니다'); drawMock(); }, () => toast('삭제에 실패했습니다')); } break;
     case 'parTest': S.parTest = id || null; render(); break;
     case 'recTest': S.recTest = id || null; drawRecords(); break;
     case 'detail': S.detailId = id; S.detailAll = false; $('#modal').innerHTML = ''; drawDetail(); break;
@@ -759,8 +1016,16 @@ document.addEventListener('change', e => {
     else if (k === 'visible') saveSetting(id, { hidden: !el.checked });
   }
 });
+document.addEventListener('change', e => {
+  const el = e.target;
+  if (el.closest && el.closest('#gForm')) { if (gSync(el)) drawGForm(); }
+  else if (el.id === 'mStu' && S.mEntry) { S.mEntry.code = el.value; const r = S.mockRes[S.mEntry.examId + '_' + el.value]; S.mEntry.ans = r ? String(r.answers || '') : ''; drawMEntry(); const a = $('#mAns'); if (a && el.value) a.focus(); }
+});
 document.addEventListener('input', e => {
-  if (e.target.id === 'ans') { if (Q && !Q.done && Q.mode === 'q') Q.answers[Q.idx] = e.target.value; }
+  if (e.target.closest && e.target.closest('#gForm')) { if (e.target.tagName !== 'SELECT') gSync(e.target); }
+  else if (e.target.id === 'mAns' && S.mEntry && S.mock[S.mEntry.examId]) { const v = e.target.value.replace(/[^0-5]/g, '').slice(0, S.mock[S.mEntry.examId].key.length); if (v !== e.target.value) e.target.value = v; S.mEntry.ans = v; $('#mLive').innerHTML = mLiveHtml(); }
+  else if (e.target.id === 'mKey') mKeyInfo();
+  else if (e.target.id === 'ans') { if (Q && !Q.done && Q.mode === 'q') Q.answers[Q.idx] = e.target.value; }
   else if (e.target.id === 'recSearch') { S.recSearch = e.target.value; drawRecords(); }
   else if (e.target.closest && e.target.closest('#testForm') && e.target.tagName === 'TEXTAREA') updatePreview();
 });
@@ -768,10 +1033,11 @@ document.addEventListener('input', e => {
 /* ============================== 시작 ============================== */
 function onData() {
   if (S.view === 'home' || S.view === 'setup') render();
-  else if (S.view === 'teacher') { if (S.tTab === 'manage') drawTestList(); else if (S.tTab === 'students') drawStudents(); else drawRecords(); }
+  else if (S.view === 'teacher') { if (S.tTab === 'manage') drawTestList(); else if (S.tTab === 'grammar') drawGList(); else if (S.tTab === 'mock') { drawMEntry(); drawMList(); } else if (S.tTab === 'students') drawStudents(); else drawRecords(); }
   else if (S.view === 'parent') render();
 }
 store.sub('customTests', v => { S.custom = v; S.loaded.custom = true; onData(); });
+store.sub('grammarTests', v => { S.grammar = v; S.loaded.grammar = true; onData(); });
 store.sub('students', v => { S.students = v; S.loaded.students = true; onData(); });
 store.sub('settings', v => { S.settings = v; S.loaded.settings = true; onData(); });
 flushPending();
