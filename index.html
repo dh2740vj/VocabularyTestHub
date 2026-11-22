@@ -211,7 +211,7 @@ const S = {
   custom: {}, settings: {}, records: {}, students: {}, grammar: {}, mock: {}, mockRes: {}, gEdit: null, mEditId: null, mEntry: null,
   loaded: { custom: false, settings: false, records: false, students: false, grammar: false },
   testId: null, selGroups: [], count: 'ALL',
-  tTab: 'records', recTest: null, recSearch: '', editId: null, detailId: null,
+  tTab: 'records', recTest: null, recSub: '', recSearch: '', editId: null, detailId: null,
   recordsSubbed: false
 };
 let Q = null; // 진행 중인 시험
@@ -647,7 +647,7 @@ function vParent() {
   const mine = all.filter(r => recKind(r) === pk), cnt = {}, titles = {};
   const kindBtn = (k, label, n) => `<button data-act="parKind" data-v="${k}" class="flex-1 py-3 rounded-xl text-sm font-bold transition-all ${(S.parKind || 'voca') === k ? 'bg-white text-blue-600 shadow' : 'text-gray-400 hover:text-gray-600'}">${label} <span class="opacity-60">${n}</span></button>`;
   mine.forEach(r => { cnt[r.testId] = (cnt[r.testId] || 0) + 1; titles[r.testId] = recTitle(r) || '단어장'; });
-  if (S.parTest && !cnt[S.parTest]) S.parTest = null;
+  if (S.parTest && (!cnt[S.parTest] || pk === 'grammar')) S.parTest = null;
   const rows = mine.filter(r => !S.parTest || r.testId === S.parTest);
   const avg = rows.length ? Math.round(rows.reduce((a, r) => a + r.score / r.total, 0) / rows.length * 100) : 0;
   const avgT = rows.length ? rows.reduce((a, r) => a + (r.elapsedSec || 0), 0) / rows.length : 0;
@@ -662,7 +662,7 @@ function vParent() {
     ${!S.parLoaded ? '<div class="bg-white rounded-[2rem] shadow-xl p-12 text-center text-gray-400 text-sm font-bold">기록을 불러오는 중…</div>'
     : !mine.length ? `<div class="bg-white rounded-[2rem] shadow-xl p-12 text-center"><div class="text-4xl mb-4">🔎</div><div class="font-black text-gray-800 mb-2">${pkLabel} 응시 기록이 없습니다</div><div class="text-gray-400 text-sm">아직 응시한 시험이 없습니다. 시험을 보면 이곳에 결과가 나타납니다.</div></div>`
     : `<div class="grid grid-cols-3 gap-3 mb-5">${stat('응시 횟수', rows.length + '회', 'bg-blue-50 text-blue-700')}${stat('평균 정답률', avg + '%', 'bg-indigo-50 text-indigo-700')}${stat('평균 소요시간', fmt(avgT), 'bg-amber-50 text-amber-700')}</div>
-      <div class="flex flex-wrap gap-2 mb-5">${chip('', '전체', mine.length)}${Object.keys(cnt).map(id => chip(id, titles[id], cnt[id])).join('')}</div>
+      ${pk === 'grammar' ? '' : `<div class="flex flex-wrap gap-2 mb-5">${chip('', '전체', mine.length)}${Object.keys(cnt).map(id => chip(id, titles[id], cnt[id])).join('')}</div>`}
       <div class="space-y-3">${rows.map(r => { const st = STATUS[r.status] || STATUS.done, pct = Math.round(r.score / r.total * 100), col = pct >= 80 ? 'bg-green-500' : pct >= 50 ? 'bg-amber-500' : 'bg-red-400';
         return `<div class="bg-white rounded-[1.5rem] shadow border border-gray-100 p-5">
           <div class="flex justify-between items-start gap-3 mb-3">
@@ -704,6 +704,7 @@ function vTeacher() {
       <div id="recTabs" class="flex flex-wrap gap-2 mb-4"></div>
       <div class="bg-white rounded-[2rem] shadow-xl border border-gray-100 p-5 sm:p-6">
         <div class="flex flex-wrap gap-3 items-center mb-4">
+          <select id="recSub" style="display:none" class="px-4 py-3 bg-gray-50 border-2 border-gray-100 rounded-xl focus:border-blue-500 outline-none text-sm font-bold text-gray-700 cursor-pointer max-w-[16rem]"></select>
           <input id="recSearch" value="${esc(S.recSearch)}" placeholder="이름 / 학생코드 검색" class="flex-1 min-w-[10rem] px-4 py-3 bg-gray-50 border-2 border-gray-100 rounded-xl focus:border-blue-500 outline-none text-sm font-bold text-gray-700">
           <button data-act="copyRecords" class="px-4 py-3 bg-gray-100 hover:bg-gray-200 rounded-xl text-sm font-bold text-gray-600">표 복사 (엑셀용)</button>
         </div>
@@ -775,11 +776,13 @@ function drawStudents() {
 
 const recName = r => (r.code && allStudents()[r.code]) || r.name || ('학생 ' + (r.code || '?'));
 const validRec = r => r && r.total && (r.code || r.name);
+const GRAMMAR_ALL = '__grammar'; // 기록 화면에서 문법 테스트는 하나로 묶어 보여 줌
+const oneTest = () => S.recTest && S.recTest !== GRAMMAR_ALL;
 function filteredRecords() {
   const kw = S.recSearch.trim().toLowerCase();
   return Object.keys(S.records).map(id => Object.assign({ id }, S.records[id]))
     .filter(validRec).map(r => Object.assign(r, { name: recName(r), group: r.code || r.group || '' }))
-    .filter(r => !S.recTest || r.testId === S.recTest)
+    .filter(r => !S.recTest || (S.recTest === GRAMMAR_ALL ? recKind(r) === 'grammar' && (!S.recSub || r.testId === S.recSub) : r.testId === S.recTest))
     .filter(r => !kw || (r.name + ' ' + (r.group || '')).toLowerCase().includes(kw))
     .sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0));
 }
@@ -790,7 +793,23 @@ function drawRecords() {
   const tests = allTests(), known = new Set(tests.map(t => t.id)), extra = [];
   all.forEach(r => { if (!known.has(r.testId)) { known.add(r.testId); extra.push({ id: r.testId, title: (r.testTitle || '삭제된 단어장') + ' (삭제됨)' }); } });
   const chip = (id, label, n) => `<button data-act="recTest" data-id="${esc(id)}" class="px-4 py-2 rounded-full text-xs font-bold border-2 transition-all ${(S.recTest || '') === id ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-100 text-gray-500 hover:border-blue-300'}">${esc(label)} <span class="opacity-70">${n}</span></button>`;
-  $('#recTabs').innerHTML = chip('', '전체', all.length) + tests.concat(extra).map(t => chip(t.id, t.title, cnt[t.id] || 0)).join('');
+  const gramRecs = all.filter(r => recKind(r) === 'grammar'), gramTests = tests.filter(t => kindOf(t) === 'grammar');
+  const notGram = x => x.kind ? x.kind !== 'grammar' : kindOf(x) !== 'grammar';
+  extra.forEach(x => { const r = all.find(r => r.testId === x.id); x.kind = r ? recKind(r) : 'voca'; });
+  $('#recTabs').innerHTML = chip('', '전체', all.length)
+    + tests.filter(t => kindOf(t) === 'voca').map(t => chip(t.id, t.title, cnt[t.id] || 0)).join('')
+    + (gramTests.length || gramRecs.length ? chip(GRAMMAR_ALL, '문법 테스트', gramRecs.length) : '')
+    + tests.filter(t => kindOf(t) === 'weekly').map(t => chip(t.id, t.title, cnt[t.id] || 0)).join('')
+    + extra.filter(notGram).map(t => chip(t.id, t.title, cnt[t.id] || 0)).join('');
+  const sub = $('#recSub');
+  if (sub) {
+    if (S.recTest === GRAMMAR_ALL) {
+      const ids = [...new Set(gramTests.map(t => t.id).concat(gramRecs.map(r => r.testId)))];
+      if (S.recSub && !ids.includes(S.recSub)) S.recSub = '';
+      sub.innerHTML = `<option value="">문법 테스트 전체 (${gramRecs.length})</option>` + ids.map(id => `<option value="${esc(id)}" ${S.recSub === id ? 'selected' : ''}>${esc(recTitle({ testId: id, testTitle: (gramRecs.find(r => r.testId === id) || {}).testTitle }))} (${cnt[id] || 0})</option>`).join('');
+      sub.style.display = '';
+    } else { sub.style.display = 'none'; S.recSub = ''; }
+  }
   const rows = filteredRecords();
   const avg = rows.length ? Math.round(rows.reduce((a, r) => a + r.score / r.total, 0) / rows.length * 100) : 0;
   const avgT = rows.length ? rows.reduce((a, r) => a + (r.elapsedSec || 0), 0) / rows.length : 0;
@@ -799,11 +818,11 @@ function drawRecords() {
   if (!S.loaded.records) { $('#recTable').innerHTML = '<div class="text-center text-gray-400 text-sm font-bold py-12">기록을 불러오는 중…</div>'; return; }
   if (!rows.length) { $('#recTable').innerHTML = '<div class="text-center text-gray-400 text-sm font-bold py-12">아직 응시 기록이 없습니다.</div>'; return; }
   $('#recTable').innerHTML = `<table class="w-full text-sm whitespace-nowrap"><thead><tr class="text-left text-[11px] text-gray-400 uppercase">
-      <th class="py-2 px-2">학생</th>${S.recTest ? '' : '<th class="py-2 px-2">단어장</th>'}<th class="py-2 px-2">범위</th><th class="py-2 px-2">진행도</th><th class="py-2 px-2">점수</th><th class="py-2 px-2">소요시간</th><th class="py-2 px-2">상태</th><th class="py-2 px-2">응시 일시</th><th></th></tr></thead><tbody>
+      <th class="py-2 px-2">학생</th>${oneTest() || S.recSub ? '' : '<th class="py-2 px-2">테스트</th>'}<th class="py-2 px-2">범위</th><th class="py-2 px-2">진행도</th><th class="py-2 px-2">점수</th><th class="py-2 px-2">소요시간</th><th class="py-2 px-2">상태</th><th class="py-2 px-2">응시 일시</th><th></th></tr></thead><tbody>
     ${rows.map(r => { const st = STATUS[r.status] || STATUS.done, pct = Math.round(r.score / r.total * 100), prog = Math.round((r.answered || 0) / r.total * 100);
       return `<tr class="border-t border-gray-100 hover:bg-blue-50/40 transition-colors">
         <td class="py-3 px-2"><div class="font-bold text-gray-800">${esc(r.name)}</div><div class="text-[11px] text-gray-400">${esc(r.group || '')}</div></td>
-        ${S.recTest ? '' : `<td class="py-3 px-2 text-gray-600 font-bold">${esc(recTitle(r))}</td>`}
+        ${oneTest() || S.recSub ? '' : `<td class="py-3 px-2 text-gray-600 font-bold">${esc(recTitle(r))}</td>`}
         <td class="py-3 px-2 max-w-[11rem] truncate ${r.retest ? 'text-amber-600 font-bold' : 'text-gray-500'}" title="${esc(r.range || '')}">${esc(r.range || '')}</td>
         <td class="py-3 px-2"><div class="flex items-center gap-2"><div class="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden"><div class="h-full bg-blue-500" style="width:${prog}%"></div></div><span class="text-xs text-gray-500 tnum">${r.answered || 0}/${r.total}</span></div></td>
         <td class="py-3 px-2 tnum"><span class="font-black text-gray-800">${r.score}</span><span class="text-gray-400">/${r.total}</span> <span class="text-xs font-bold ${pct >= 80 ? 'text-green-600' : pct >= 50 ? 'text-amber-600' : 'text-red-500'}">${pct}%</span></td>
@@ -1223,7 +1242,7 @@ document.addEventListener('click', e => {
       Promise.resolve(store.remove('mockExams', id)).then(() => { toast('삭제되었습니다'); drawMock(); }, () => toast('삭제에 실패했습니다')); } break;
     case 'parKind': S.parKind = b.dataset.v; S.parTest = null; render(); break;
     case 'parTest': S.parTest = id || null; render(); break;
-    case 'recTest': S.recTest = id || null; drawRecords(); break;
+    case 'recTest': S.recTest = id || null; S.recSub = ''; drawRecords(); break;
     case 'detail': S.detailId = id; S.detailAll = false; $('#modal').innerHTML = ''; drawDetail(); break;
     case 'copyDetail': if (S.records[S.detailId]) copyText(wrongText(S.records[S.detailId]), '오답 노트가 복사되었습니다!'); break;
     case 'delRecord': if (confirm('이 응시 기록을 삭제할까요?')) Promise.resolve(store.remove('records', id)).catch(() => toast('삭제에 실패했습니다')); break;
@@ -1242,6 +1261,7 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('change', e => {
   const el = e.target;
+  if (el.id === 'recSub') { S.recSub = el.value; drawRecords(); return; }
   if (el.dataset.change === 'count') { S.count = el.value === 'ALL' ? 'ALL' : Number(el.value); render(); }
   else if (el.dataset.set) {
     const id = el.dataset.id, k = el.dataset.set;
