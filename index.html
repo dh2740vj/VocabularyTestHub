@@ -14,11 +14,12 @@
 <!-- 설정은 config.js 파일에 따로 있습니다. 이 파일(index.html)은 고칠 필요가 없습니다. -->
 <script src="config.js"></script>
 <script>
-const CONFIG = Object.assign({ TEACHER_PASSWORD: "1234", STUDENTS: { "6406": "" }, FIREBASE: {} }, window.VOCA_CONFIG || {});
+const CONFIG = Object.assign({ STUDENTS: { "6406": "" }, FIREBASE: {} }, window.VOCA_CONFIG || {});
 </script>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css">
 <style>
@@ -185,6 +186,10 @@ try {
   storeError = 'Firebase에 연결하지 못했습니다. 인터넷 연결과 CONFIG 값을 확인해 주세요. (지금은 이 기기에만 저장됩니다)';
   store = localStore();
 }
+let fbAuth = null;
+if (USE_FB && !storeError && firebase.auth) {
+  try { fbAuth = firebase.auth(); fbAuth.setPersistence(firebase.auth.Auth.Persistence.SESSION).catch(() => {}); } catch (e) { fbAuth = null; }
+}
 
 /* 응시 기록은 먼저 기기에 보관한 뒤 전송 → 전송 실패 시 다음 접속 때 다시 보냄 */
 const PENDING = 'vocaHubPending';
@@ -208,7 +213,8 @@ const S = {
   recordsSubbed: false
 };
 let Q = null; // 진행 중인 시험
-function teacherToken() { let h = 5381; const s = 'vh|' + CONFIG.TEACHER_PASSWORD + '|' + location.pathname; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return 't' + (h >>> 0).toString(36); }
+/* 선생님 로그인: Firebase 사용 시 이메일 로그인(Firebase 인증), 체험 모드에서만 config.js의 TEACHER_PASSWORD 사용 */
+function teacherToken() { let h = 5381; const s = 'vh|' + (CONFIG.TEACHER_PASSWORD || '') + '|' + location.pathname; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return 't' + (h >>> 0).toString(36); }
 try { localStorage.removeItem('vocaHubStudent'); localStorage.removeItem('vocaHubParent'); } catch (e) {} // 예전에 기억해 둔 학생코드 지우기
 if (S.student && !S.student.code) S.student = null;
 if (S.parent && !S.parent.code) S.parent = null;
@@ -320,7 +326,8 @@ function vLogin() {
   const teacherBox = `<div class="fixed top-4 right-4 z-30 flex flex-col items-end">
     <button data-act="teacherToggle" class="px-4 py-2 bg-white rounded-full text-xs font-bold shadow-sm border border-gray-100 transition-colors ${S.teacherOpen ? 'text-blue-600' : 'text-gray-500 hover:text-gray-800'}">🧑‍🏫 선생님 로그인</button>
     ${S.teacherOpen ? `<form data-form="teacherLogin" class="fade mt-2 w-64 bg-white p-4 rounded-2xl shadow-2xl border border-gray-100 space-y-3">
-      <input id="teacherPw" name="pw" type="password" placeholder="선생님 비밀번호" autocomplete="off" class="w-full px-4 py-3 bg-gray-50 border-2 border-gray-100 rounded-xl focus:border-blue-500 outline-none text-sm font-bold text-gray-700">
+      ${fbAuth ? `<input id="teacherEmail" name="email" type="email" placeholder="선생님 이메일" autocomplete="username" class="w-full px-4 py-3 bg-gray-50 border-2 border-gray-100 rounded-xl focus:border-blue-500 outline-none text-sm font-bold text-gray-700">` : ''}
+      <input id="teacherPw" name="pw" type="password" placeholder="선생님 비밀번호" autocomplete="${fbAuth ? 'current-password' : 'off'}" class="w-full px-4 py-3 bg-gray-50 border-2 border-gray-100 rounded-xl focus:border-blue-500 outline-none text-sm font-bold text-gray-700">
       ${S.teacherErr ? `<p class="text-red-500 text-xs font-bold">${esc(S.teacherErr)}</p>` : ''}
       <button type="submit" class="w-full bg-gray-900 hover:bg-black text-white text-sm font-bold py-3 rounded-xl">로그인</button>
     </form>` : ''}</div>`;
@@ -1127,9 +1134,24 @@ document.addEventListener('submit', e => {
     if (kind === 'studentLogin') { S.student = { code }; goStudent(); }
     else { S.parent = { code }; S.parTest = null; goParent(); }
   } else if (kind === 'teacherLogin') {
-    if (String(fd.get('pw') || '') !== String(CONFIG.TEACHER_PASSWORD)) { S.teacherErr = '비밀번호가 올바르지 않습니다.'; render(); const pw = $('#teacherPw'); if (pw) pw.focus(); return; }
-    S.loginErr = ''; S.teacherErr = ''; S.teacherOpen = false; S.tTab = 'records'; try { sessionStorage.setItem('vocaHubTeacher', teacherToken()); } catch (er) {}
-    goTeacher();
+    const ok = () => { S.loginErr = ''; S.teacherErr = ''; S.teacherOpen = false; S.tTab = 'records'; goTeacher(); };
+    const fail = msg => { S.teacherErr = msg; render(); const pw = $('#teacherPw'); if (pw) pw.focus(); };
+    if (fbAuth) {
+      const email = String(fd.get('email') || '').trim(), pw = String(fd.get('pw') || '');
+      if (!email || !pw) return fail('이메일과 비밀번호를 입력해 주세요.');
+      S.teacherErr = '로그인 중...'; render();
+      fbAuth.signInWithEmailAndPassword(email, pw).then(ok, e => {
+        const c = (e && e.code) || '';
+        fail(c === 'auth/too-many-requests' ? '시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.'
+          : c === 'auth/network-request-failed' ? '인터넷 연결을 확인해 주세요.'
+          : c === 'auth/operation-not-allowed' ? 'Firebase 콘솔에서 이메일/비밀번호 로그인을 켜 주세요.'
+          : '이메일 또는 비밀번호가 올바르지 않습니다.');
+      });
+      return;
+    }
+    if (!CONFIG.TEACHER_PASSWORD || String(fd.get('pw') || '') !== String(CONFIG.TEACHER_PASSWORD)) return fail('비밀번호가 올바르지 않습니다.');
+    try { sessionStorage.setItem('vocaHubTeacher', teacherToken()); } catch (er) {}
+    ok();
   } else if (kind === 'answer') { if (Q && !Q.done) { if (Q.idx >= Q.qs.length - 1) goReview(); else goQuestion(Q.idx + 1); } }
   else if (kind === 'saveStudent') {
     const code = cleanCode(fd.get('code')), name = String(fd.get('name') || '').trim();
@@ -1152,9 +1174,9 @@ document.addEventListener('click', e => {
   const act = b.dataset.act, id = b.dataset.id;
   if (act === 'closeDetail') { if (b.dataset.force || !e.target.closest('[data-stop]')) { S.detailId = null; drawDetail(); } return; }
   switch (act) {
-    case 'teacherToggle': S.teacherOpen = !S.teacherOpen; S.teacherErr = ''; render(); { const pw = $('#teacherPw'); if (pw) pw.focus(); } break;
+    case 'teacherToggle': S.teacherOpen = !S.teacherOpen; S.teacherErr = ''; render(); { const f = $('#teacherEmail') || $('#teacherPw'); if (f) f.focus(); } break;
     case 'loginTab': S.loginTab = b.dataset.v; S.loginErr = ''; render(); break;
-    case 'logout': parentUnsubs.forEach(u => u()); parentUnsubs = []; studentUnsubs.forEach(u => u()); studentUnsubs = []; S.myRecords = {}; S.myOpen = {}; S.parRecords = {}; S.parMock = {}; S.view = 'login'; S.detailId = null; try { sessionStorage.removeItem('vocaHubTeacher'); } catch (er) {} $('#modal').innerHTML = ''; render(); break;
+    case 'logout': parentUnsubs.forEach(u => u()); parentUnsubs = []; studentUnsubs.forEach(u => u()); studentUnsubs = []; S.myRecords = {}; S.myOpen = {}; S.parRecords = {}; S.parMock = {}; S.view = 'login'; S.detailId = null; try { sessionStorage.removeItem('vocaHubTeacher'); } catch (er) {} if (fbAuth && fbAuth.currentUser) fbAuth.signOut().catch(() => {}); $('#modal').innerHTML = ''; render(); break;
     case 'goHome': Q = null; S.view = 'home'; render(); break;
     case 'pickTest': { const t = getTest(id); if (!t) break; S.testId = id; S.selGroups = t.groups.length > 1 ? [0] : [0]; S.count = 'ALL'; S.view = 'setup'; render(); break; }
     case 'toggleGroup': { const i = Number(b.dataset.i), k = S.selGroups.indexOf(i); if (k >= 0) S.selGroups.splice(k, 1); else S.selGroups.push(i); render(); break; }
@@ -1267,8 +1289,14 @@ store.sub('students', v => { S.students = v; S.loaded.students = true; onData();
 store.sub('settings', v => { S.settings = v; S.loaded.settings = true; onData(); });
 flushPending();
 window.addEventListener('online', flushPending);
-let wasTeacher = false; try { wasTeacher = sessionStorage.getItem('vocaHubTeacher') === teacherToken(); } catch (e) {}
-if (wasTeacher) goTeacher(); else render();
+if (fbAuth) { // 선생님 로그인 상태는 Firebase 인증이 기억함 (탭을 닫으면 로그아웃)
+  render();
+  let first = true;
+  fbAuth.onAuthStateChanged(u => { if (first && u && S.view === 'login') { S.tTab = 'records'; goTeacher(); } first = false; });
+} else {
+  let wasTeacher = false; try { wasTeacher = !!CONFIG.TEACHER_PASSWORD && sessionStorage.getItem('vocaHubTeacher') === teacherToken(); } catch (e) {}
+  if (wasTeacher) goTeacher(); else render();
+}
 </script>
 </body>
 </html>
